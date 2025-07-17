@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Reader App</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome for icons (simpler approach than Lucide) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- PDF.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.6.172/pdf.min.js"></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script>
+        // Configure PDF.js
+        window.pdfjsLib = pdfjsLib;
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.6.172/pdf.worker.min.js';
+        
+        // Debug errors to the screen
+        window.onerror = function(message, source, lineno, colno, error) {
+            const errorDiv = document.getElementById('error-log');
+            if (errorDiv) {
+                const errorMessage = document.createElement('div');
+                errorMessage.className = 'bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-2';
+                errorMessage.textContent = `Error: ${message} (Line: ${lineno})`;
+                errorDiv.appendChild(errorMessage);
+            }
+            console.error(message, error);
+            return false;
+        };
+    </script>
+    <style>
+        /* Simple loading spinner */
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Thêm thông báo xác nhận API key chưa được cấu hình -->
+    <div id="api-key-alert" class="fixed top-0 left-0 right-0 z-50 bg-yellow-100 border border-yellow-400 text-yellow-800 px-4 py-3 hidden">
+        <strong class="font-bold">Chú ý!</strong>
+        <span class="block sm:inline"> API key chưa được cấu hình. Các tính năng AI sẽ không hoạt động cho đến khi bạn cập nhật API key trong code.</span>
+        <button class="absolute top-0 bottom-0 right-0 px-4 py-3" onclick="this.parentElement.classList.add('hidden')">
+            <span class="text-2xl">&times;</span>
+        </button>
+    </div>
+    
+    <!-- Log lỗi -->
+    <div id="error-log" class="fixed top-0 left-0 right-0 z-50 max-h-1/3 overflow-y-auto mt-12"></div>
+    
+    <!-- Container chính -->
+    <div id="root"></div>
+    
+    <!-- Script kiểm tra API key -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(() => {
+                const htmlContent = document.documentElement.innerHTML;
+                if (htmlContent.includes('"YOUR_GEMINI_API_KEY"')) {
+                    document.getElementById('api-key-alert').classList.remove('hidden');
+                }
+            }, 1000);
+        });
+    </script>
+    
+    <script type="text/babel">
+        const { useState, useCallback, useMemo } = React;
+        
+        // Helper function to convert file to base64 for image processing
+        const toBase64 = file => new Promise((resolve, reject) => {
+            // #4: Xử lý hình ảnh quá lớn - Kiểm tra kích thước file trước khi xử lý
+            if (file.size > 10 * 1024 * 1024) { // Giới hạn 10MB cho ảnh
+                reject(new Error(`Hình ảnh quá lớn (${Math.round(file.size / (1024 * 1024))}MB). Giới hạn là 10MB.`));
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = error => reject(error);
+            
+            // Thêm timeout để tránh treo browser khi xử lý ảnh lớn
+            setTimeout(() => reject(new Error('Quá thời gian xử lý hình ảnh')), 30000);
+        });
+
+        // PDF Text Extraction Function
+        const extractTextFromPdf = async (file) => {
+            try {
+                console.log("Starting PDF extraction...");
+                // Kiểm tra kích thược file PDF (giới hạn ở 50MB để tránh treo trình duyệt)
+                if (file.size > 50 * 1024 * 1024) {
+                    throw new Error(`File PDF quá lớn (${Math.round(file.size / (1024 * 1024))}MB). Giới hạn là 50MB.`);
+                }
+                
+                // Use the pdfjsLib global variable
+                const pdfjsLib = window.pdfjsLib;
+                if (!pdfjsLib) {
+                    throw new Error("Thư viện PDF.js chưa được tải. Vui lòng làm mới trang và thử lại.");
+                }
+                
+                // Read the file into an ArrayBuffer
+                const arrayBuffer = await file.arrayBuffer().catch(err => {
+                    throw new Error(`Không thể đọc file: ${err.message}`);
+                });
+                console.log("File converted to ArrayBuffer");
+                
+                // Thêm timeout để tránh treo browser khi xử lý PDF quá lớn hoặc phức tạp
+                const timeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error("PDF xử lý quá thời gian. File có thể quá phức tạp hoặc hỏng.")), 60000);
+                });
+                
+                // Load the PDF document with timeout
+                const pdf = await Promise.race([
+                    pdfjsLib.getDocument({data: arrayBuffer}).promise,
+                    timeoutPromise
+                ]).catch(err => {
+                    if (err.name === "PasswordException") {
+                        throw new Error("File PDF được bảo vệ bằng mật khẩu. Vui lòng cung cấp file không có bảo mật.");
+                    } else {
+                        throw new Error(`Không thể tải file PDF: ${err.message}`);
+                    }
+                });
+                
+                console.log(`PDF loaded with ${pdf.numPages} pages`);
+                
+                // Kiểm tra số trang
+                if (pdf.numPages > 100) {
+                    throw new Error(`PDF có quá nhiều trang (${pdf.numPages}). Giới hạn là 100 trang.`);
+                }
+                
+                let fullText = '';
+                // Iterate through each page of the PDF
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    console.log(`Processing page ${i}/${pdf.numPages}`);
+                    const page = await pdf.getPage(i).catch(err => {
+                        throw new Error(`Lỗi khi đọc trang ${i}: ${err.message}`);
+                    });
+                    
+                    const textContent = await page.getTextContent().catch(err => {
+                        throw new Error(`Lỗi khi trích xuất văn bản từ trang ${i}: ${err.message}`);
+                    });
+                    
+                    // Join the text items from the page
+                    const pageText = textContent.items.map(item => item.str).join(' ');
+                    fullText += pageText + '\n\n'; // Add page text to the full text
+                }
+                
+                // Kiểm tra nếu văn bản trống rỗng
+                if (!fullText.trim()) {
+                    throw new Error("Không thể trích xuất văn bản từ PDF. Có thể PDF chứa hình ảnh hoặc được quét.");
+                }
+                
+                console.log("PDF extraction complete");
+                return fullText;
+            } catch (error) {
+                console.error('PDF extraction error:', error);
+                throw error;
+            }
+        };
+
+        // Main App Component
+        function App() {
+            // State management
+            const [documents, setDocuments] = useState([]);
+            const [messages, setMessages] = useState([
+                { role: 'bot', content: 'Xin chào! Vui lòng tải lên tài liệu (PDF, hình ảnh, .txt) để tôi có thể phân tích và trả lời câu hỏi của bạn.' }
+            ]);
+            const [userInput, setUserInput] = useState('');
+            const [isLoading, setIsLoading] = useState(false);
+            const [error, setError] = useState(null);
+
+            // #6: Xử lý văn bản quá lớn trong knowledgeBase - Thêm giới hạn và cắt bớt nếu cần
+            const knowledgeBase = useMemo(() => {
+                // Hàm trợ giúp để giới hạn độ dài văn bản
+                const truncateText = (text, maxLength) => {
+                    if (text.length <= maxLength) return text;
+                    return text.substring(0, maxLength) + '... [văn bản đã được cắt ngắn do quá dài]';
+                };
+                
+                // Giới hạn mỗi tài liệu tối đa 50,000 ký tự
+                const maxDocLength = 50000;
+                const processedDocs = documents.map(doc => {
+                    const truncatedContent = truncateText(doc.content, maxDocLength);
+                    return `Tên file: ${doc.name}\nNội dung:\n${truncatedContent}`;
+                });
+                
+                // Giới hạn tổng số tài liệu xử lý
+                const maxDocs = 10;
+                if (processedDocs.length > maxDocs) {
+                    return processedDocs.slice(0, maxDocs)
+                        .join('\n\n---\n\n') + 
+                        `\n\n---\n\nCảnh báo: Chỉ ${maxDocs}/${processedDocs.length} tài liệu được xử lý do giới hạn.`;
+                }
+                
+                return processedDocs.join('\n\n---\n\n');
+            }, [documents]);
+
+            // Function to handle API errors
+            const handleApiError = (message) => {
+                setError(message);
+                setIsLoading(false);
+            };
+
+            // Helper function để xác định loại file từ tên file
+            const getFileTypeFromName = (fileName) => {
+                const ext = fileName.split('.').pop().toLowerCase();
+                if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(ext)) {
+                    return 'image';
+                } else if (ext === 'pdf') {
+                    return 'pdf';
+                } else if (ext === 'txt') {
+                    return 'text';
+                }
+                return null;
+            };
+            
+            // Function to extract text from various file types
+            const extractTextFromFile = async (file) => {
+                setIsLoading(true);
+                setError(null);
+                try {
+                    console.log(`Processing file: ${file.name} (${file.type})`);
+                    
+                    // Xác định loại file dựa trên MIME type hoặc phần mở rộng
+                    let fileType = file.type;
+                    if (!fileType || fileType === '') {
+                        const detectedType = getFileTypeFromName(file.name);
+                        if (detectedType === 'image') {
+                            fileType = 'image/jpeg'; // Giả định là JPEG
+                        } else if (detectedType === 'pdf') {
+                            fileType = 'application/pdf';
+                        } else if (detectedType === 'text') {
+                            fileType = 'text/plain';
+                        }
+                        console.log(`File type was empty, detected as: ${fileType}`);
+                    }
+                    
+                    if (fileType.startsWith('image/') || getFileTypeFromName(file.name) === 'image') {
+                        const base64Data = await toBase64(file);
+                        return await callGeminiVisionAPI(base64Data);
+                    } else if (fileType === 'application/pdf' || getFileTypeFromName(file.name) === 'pdf') {
+                        return await extractTextFromPdf(file);
+                    } else if (fileType === 'text/plain' || getFileTypeFromName(file.name) === 'text') {
+                        return await file.text();
+                    } else {
+                        throw new Error(`Định dạng file không được hỗ trợ: ${file.name} (${fileType})`);
+                    }
+                } catch (err) {
+                    console.error('File extraction error:', err);
+                    handleApiError(`Lỗi xử lý file ${file.name}: ${err.message}`);
+                    return null;
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            // Function to call Gemini Vision API for image analysis
+            const callGeminiVisionAPI = async (base64ImageData) => {
+                const apiKey = "YOUR_GEMINI_API_KEY"; // Replace with your actual Gemini API key
+                
+                // Kiểm tra API key
+                if (!apiKey || apiKey === "YOUR_GEMINI_API_KEY") {
+                    setError("Lỗi: API key của Google Gemini chưa được cấu hình. Vui lòng cập nhật API key trong code.");
+                    return null;
+                }
+                
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                
+                const payload = {
+                    contents: [{
+                        parts: [
+                            { text: "Trích xuất toàn bộ văn bản từ hình ảnh này. Chỉ trả về nội dung văn bản." },
+                            { inlineData: { mimeType: "image/jpeg", data: base64ImageData } }
+                        ]
+                    }]
+                };
+
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!response.ok) {
+                        const errorBody = await response.json();
+                        throw new Error(`Lỗi API: ${errorBody.error.message}`);
+                    }
+                    const result = await response.json();
+                    if (result.candidates && result.candidates[0].content.parts[0].text) {
+                        return result.candidates[0].content.parts[0].text;
+                    } else {
+                        throw new Error("Không thể trích xuất văn bản từ hình ảnh.");
+                    }
+                } catch (err) {
+                    handleApiError(err.message);
+                    return null;
+                }
+            };
+
+            // #5: Xác thực MIME type của file
+            const validateFile = (file) => {
+                // Kiểm tra kích thước file
+                const maxSize = 50 * 1024 * 1024; // 50MB max cho tất cả các file
+                if (file.size > maxSize) {
+                    throw new Error(`File ${file.name} quá lớn (${Math.round(file.size / (1024 * 1024))}MB). Giới hạn là 50MB.`);
+                }
+                
+                // Kiểm tra MIME type và phần mở rộng
+                const fileExt = file.name.split('.').pop().toLowerCase();
+                const allowedTypes = {
+                    'pdf': ['application/pdf'],
+                    'txt': ['text/plain'],
+                    'jpg': ['image/jpeg'],
+                    'jpeg': ['image/jpeg'],
+                    'png': ['image/png'],
+                    'gif': ['image/gif'],
+                    'bmp': ['image/bmp'],
+                    'webp': ['image/webp']
+                };
+                
+                if (!allowedTypes[fileExt]) {
+                    throw new Error(`Định dạng file không được hỗ trợ: ${fileExt}`);
+                }
+                
+                // Kiểm tra nếu MIME type được cung cấp, xem có khớp với phần mở rộng không
+                if (file.type && !allowedTypes[fileExt].includes(file.type)) {
+                    console.warn(`MIME type không khớp với phần mở rộng: ${file.name} (${file.type})`);
+                }
+                
+                return true;
+            };
+            
+            // #10: Kiểm tra trùng lặp file tốt hơn
+            const checkDuplicate = async (file, existingDocs) => {
+                // Kiểm tra trùng tên
+                if (existingDocs.some(doc => doc.name === file.name)) {
+                    return `File "${file.name}" đã tồn tại với tên này.`;
+                }
+                
+                // Nếu là file nhỏ (<1MB), tạo hash đơn giản để so sánh nội dung
+                if (file.size < 1024 * 1024) {
+                    try {
+                        const content = await file.text().catch(() => null);
+                        if (content) {
+                            // Tạo "signature" đơn giản từ nội dung (kích thước + 100 ký tự đầu tiên)
+                            const signature = `${content.length}:${content.substring(0, 100)}`;
+                            
+                            // So sánh với các file đã tải lên
+                            for (const doc of existingDocs) {
+                                if (doc.content && doc.content.length > 100) {
+                                    const docSignature = `${doc.content.length}:${doc.content.substring(0, 100)}`;
+                                    if (signature === docSignature) {
+                                        return `File "${file.name}" có nội dung giống với file "${doc.name}" đã tải lên.`;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (err) {
+                        console.log("Cannot check for duplicates:", err);
+                    }
+                }
+                
+                return null; // Không có trùng lặp
+            };
+            
+            // Handler for file uploads (với xác thực MIME type và kiểm tra trùng lặp tốt hơn)
+            const handleFileUpload = useCallback(async (event) => {
+                console.log("File upload triggered");
+                const files = Array.from(event.target.files);
+                if (files.length === 0) {
+                    console.log("No files selected");
+                    return;
+                }
+                
+                // Giới hạn số lượng file tải lên
+                if (files.length > 5) {
+                    setError(`Chỉ được phép tải lên tối đa 5 file cùng lúc. Bạn đã chọn ${files.length} file.`);
+                    event.target.value = null;
+                    return;
+                }
+                
+                // #7: Ngăn chặn xử lý đồng thời nhiều file
+                if (isLoading) {
+                    setError("Đang xử lý file, vui lòng đợi hoàn thành trước khi tải lên thêm.");
+                    event.target.value = null;
+                    return;
+                }
+                
+                setIsLoading(true);
+                console.log(`${files.length} files selected`);
+                
+                // Giới hạn tổng số file trong tài liệu
+                if (documents.length + files.length > 20) {
+                    setError(`Đã đạt giới hạn tài liệu (20). Vui lòng xóa bớt tài liệu cũ trước khi tải lên thêm.`);
+                    setIsLoading(false);
+                    event.target.value = null;
+                    return;
+                }
+                
+                for (const file of files) {
+                    console.log(`Processing file: ${file.name} (${file.type})`);
+                    try {
+                        // #5 & #10: Xác thực file và kiểm tra trùng lặp
+                        validateFile(file);
+                        const duplicateError = await checkDuplicate(file, documents);
+                        if (duplicateError) {
+                            setError(duplicateError);
+                            continue;
+                        }
+                        
+                        const content = await extractTextFromFile(file);
+                        if (content) {
+                            console.log(`Successfully extracted content from ${file.name}`);
+                            // #9: Xử lý không đồng bộ trong các state update - gom nhóm các state update
+                            setDocuments(prevDocs => {
+                                const newDocs = [...prevDocs, { name: file.name, type: file.type, content }];
+                                // Cập nhật messages trong useEffect riêng biệt
+                                setTimeout(() => {
+                                    setMessages(prev => [...prev, { role: 'system', content: `Đã tải lên và phân tích thành công file: ${file.name}` }]);
+                                }, 10);
+                                return newDocs;
+                            });
+                        }
+                    } catch (err) {
+                        console.error(`Error processing ${file.name}:`, err);
+                        setError(`Lỗi xử lý file ${file.name}: ${err.message}`);
+                    }
+                }
+                event.target.value = null;
+                setIsLoading(false);
+            }, [documents, isLoading]);
+            
+            // Handler for removing a document
+            const removeDocument = useCallback((docName) => {
+                setDocuments(docs => docs.filter(doc => doc.name !== docName));
+                setMessages(prev => [...prev, { role: 'system', content: `Đã xóa file: ${docName}` }]);
+            }, []);
+
+            // #7: Xử lý ấn nút gửi nhiều lần - Thêm biến để theo dõi trạng thái gửi
+            const [isSending, setIsSending] = useState(false);
+            
+            // Handler for sending a user message
+            const handleSendMessage = useCallback(async () => {
+                // Chặn nếu đầu vào trống hoặc đang xử lý hoặc đang gửi
+                if (!userInput.trim() || isLoading || isSending) return;
+
+                // Đánh dấu đang trong quá trình gửi để ngăn nhấn nút nhiều lần
+                setIsSending(true);
+                
+                const newMessages = [...messages, { role: 'user', content: userInput }];
+                setMessages(newMessages);
+                
+                // Lưu message người dùng
+                const currentUserInput = userInput;
+                setUserInput('');
+                setIsLoading(true);
+                setError(null);
+
+                if (knowledgeBase.trim() === '') {
+                    setMessages([...newMessages, { role: 'bot', content: 'Vui lòng tải lên ít nhất một tài liệu trước khi đặt câu hỏi.' }]);
+                    setIsLoading(false);
+                    setIsSending(false);
+                    return;
+                }
+
+                const prompt = `Bạn là một trợ lý AI. Dựa *DUY NHẤT* vào nội dung trong phần "Bối cảnh tài liệu" dưới đây để trả lời "Câu hỏi của người dùng".
+                KHÔNG được sử dụng bất kỳ kiến thức bên ngoài nào.
+                Nếu câu trả lời không có trong tài liệu, hãy trả lời chính xác là: "Tôi không tìm thấy thông tin này trong các tài liệu được cung cấp."
+
+                --- Bối cảnh tài liệu ---
+                ${knowledgeBase}
+                --- Hết bối cảnh tài liệu ---
+
+                Câu hỏi của người dùng: "${userInput}"
+                `;
+
+                const apiKey = "YOUR_GEMINI_API_KEY"; // Replace with your actual Gemini API key
+                
+                // Kiểm tra API key
+                if (!apiKey || apiKey === "YOUR_GEMINI_API_KEY") {
+                    setMessages(prev => [...prev, { role: 'bot', content: "Lỗi: API key của Google Gemini chưa được cấu hình. Vui lòng cập nhật API key trong code." }]);
+                    setError("API key của Google Gemini chưa được cấu hình. Vui lòng cập nhật API key trong code.");
+                    return;
+                }
+                
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+                const payload = {
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: {
+                        temperature: 0.1,
+                        topP: 0.95,
+                    }
+                };
+
+                // #5: Thiếu xử lý lỗi mạng - Thêm timeout và xử lý lỗi mạng
+                try {
+                    // Tạo promise với timeout
+                    const fetchWithTimeout = async (url, options, timeout = 30000) => {
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), timeout);
+                        
+                        try {
+                            const response = await fetch(url, {
+                                ...options,
+                                signal: controller.signal
+                            });
+                            clearTimeout(timeoutId);
+                            return response;
+                        } catch (error) {
+                            clearTimeout(timeoutId);
+                            if (error.name === 'AbortError') {
+                                throw new Error('Yêu cầu đã hết thời gian chờ. Vui lòng thử lại sau.');
+                            }
+                            throw error;
+                        }
+                    };
+                    
+                    // Gọi API với timeout
+                    const response = await fetchWithTimeout(
+                        apiUrl, 
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        },
+                        30000 // 30 giây timeout
+                    );
+                    
+                    if (!response.ok) {
+                        // Chi tiết xử lý lỗi từ API
+                        let errorMessage = `Lỗi máy chủ: ${response.status} ${response.statusText}`;
+                        try {
+                            const errorBody = await response.json();
+                            if (errorBody && errorBody.error && errorBody.error.message) {
+                                errorMessage = `Lỗi API: ${errorBody.error.message}`;
+                            }
+                        } catch (_) {
+                            // Không làm gì nếu không parse được JSON
+                        }
+                        throw new Error(errorMessage);
+                    }
+                    
+                    const result = await response.json();
+                    
+                    let botResponse = "Xin lỗi, đã có lỗi xảy ra khi xử lý yêu cầu của bạn.";
+                    if (result.candidates && result.candidates[0].content.parts[0].text) {
+                        botResponse = result.candidates[0].content.parts[0].text;
+                    }
+                    setMessages(prev => [...prev, { role: 'bot', content: botResponse }]);
+
+                } catch (err) {
+                    console.error('API error:', err);
+                    let errorMessage = err.message;
+                    
+                    // Phân loại lỗi mạng cho thông báo hữu ích hơn
+                    if (err.name === "TypeError" && errorMessage.includes("NetworkError")) {
+                        errorMessage = "Không thể kết nối đến máy chủ. Vui lòng kiểm tra kết nối mạng của bạn.";
+                    } else if (err.name === "TypeError" && errorMessage.includes("Failed to fetch")) {
+                        errorMessage = "Lỗi kết nối mạng. Vui lòng kiểm tra kết nối internet của bạn.";
+                    }
+                    
+                    handleApiError(errorMessage);
+                    setMessages(prev => [...prev, { role: 'bot', content: `Rất tiếc, tôi đã gặp lỗi: ${errorMessage}` }]);
+                } finally {
+                    setIsLoading(false);
+                    setIsSending(false); // Đặt lại trạng thái gửi
+                }
+            }, [userInput, messages, isLoading, knowledgeBase]);
+
+            return (
+                <div className="font-sans bg-gray-50 flex h-screen">
+                    {/* Left Panel: File Management */}
+                    <div className="w-1/3 bg-white border-r border-gray-200 flex flex-col p-6 shadow-md">
+                        <div className="flex items-center gap-3 mb-6">
+                            <i className="fas fa-paperclip text-blue-600 text-2xl"></i>
+                            <h1 className="text-2xl font-bold text-gray-800">Quản lý Tài liệu</h1>
+                        </div>
+
+                        <label htmlFor="file-upload" className="w-full cursor-pointer bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-all duration-300 flex items-center justify-center gap-2 shadow-sm">
+                            <i className="fas fa-upload"></i>
+                            <span>Tải lên File</span>
+                        </label>
+                        <input 
+                            id="file-upload" 
+                            type="file" 
+                            className="hidden" 
+                            onChange={handleFileUpload} 
+                            multiple 
+                            accept=".pdf,.png,.jpg,.jpeg,.txt"
+                        />
+                        
+                        <p className="text-sm text-gray-500 mt-3 text-center">Hỗ trợ: PDF, PNG, JPG, TXT</p>
+                        
+                        <div className="mt-8 flex-grow overflow-y-auto pr-2">
+                            <h2 className="text-lg font-semibold text-gray-700 mb-4">Tài liệu đã tải lên</h2>
+                            {documents.length === 0 ? (
+                                <div className="text-center text-gray-500 mt-10">
+                                    <i className="fas fa-file-alt text-3xl mb-2 opacity-50"></i>
+                                    <p>Chưa có tài liệu nào.</p>
+                                </div>
+                            ) : (
+                                <ul className="space-y-3">
+                                    {documents.map((doc, index) => (
+                                        <li key={index} className="flex items-center justify-between bg-gray-100 p-3 rounded-lg shadow-sm hover:bg-gray-200 transition-colors">
+                                            <div className="flex items-center gap-3 overflow-hidden">
+                                                <i className="fas fa-file-alt text-blue-500"></i>
+                                                <span className="truncate text-gray-800 font-medium">{doc.name}</span>
+                                            </div>
+                                            <button 
+                                                onClick={() => removeDocument(doc.name)} 
+                                                className="text-red-500 hover:text-red-700 transition-colors p-1 rounded-full"
+                                            >
+                                                <i className="fas fa-times-circle"></i>
+                                            </button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Right Panel: Chat Interface */}
+                    <div className="w-2/3 flex flex-col bg-gray-100">
+                        <div className="flex-grow p-6 overflow-y-auto">
+                            <div className="space-y-6">
+                                {messages.map((msg, index) => (
+                                    <div key={index} className={`flex items-end gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                        {msg.role === 'bot' && 
+                                            <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white flex-shrink-0">
+                                                <i className="fas fa-robot"></i>
+                                            </div>
+                                        }
+                                        
+                                        {msg.role === 'system' ? (
+                                            <div className="text-center w-full text-sm text-gray-500 italic">
+                                                {msg.content}
+                                            </div>
+                                        ) : (
+                                            <div className={`max-w-xl p-4 rounded-2xl shadow-md ${msg.role === 'user' ? 'bg-white text-gray-800 rounded-br-none' : 'bg-blue-600 text-white rounded-bl-none'}`}>
+                                                <p style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</p>
+                                            </div>
+                                        )}
+
+                                        {msg.role === 'user' && 
+                                            <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center text-gray-600 flex-shrink-0 border">
+                                                <i className="fas fa-user"></i>
+                                            </div>
+                                        }
+                                    </div>
+                                ))}
+                                {isLoading && (
+                                    <div className="flex items-end gap-3 justify-start">
+                                        <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white flex-shrink-0">
+                                            <i className="fas fa-robot"></i>
+                                        </div>
+                                        <div className="max-w-xl p-4 rounded-2xl shadow-md bg-blue-600 text-white rounded-bl-none">
+                                            <div className="flex items-center gap-2">
+                                                <i className="fas fa-spinner animate-spin"></i>
+                                                <span>Đang xử lý file...</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {error && (
+                            <div className="p-4 m-6 bg-red-100 border border-red-400 text-red-700 rounded-lg relative" role="alert">
+                                <strong className="font-bold">Lỗi! </strong>
+                                <span className="block sm:inline">{error}</span>
+                                <button 
+                                    onClick={() => setError(null)} 
+                                    className="absolute top-0 bottom-0 right-0 px-4 py-3"
+                                >
+                                    <i className="fas fa-times-circle"></i>
+                                </button>
+                            </div>
+                        )}
+
+                        <div className="p-6 bg-white border-t border-gray-200">
+                            <div className="flex items-center gap-4">
+                                <input
+                                    type="text"
+                                    value={userInput}
+                                    onChange={(e) => setUserInput(e.target.value)}
+                                    onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                                    placeholder="Nhập câu hỏi của bạn ở đây..."
+                                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
+                                    disabled={isLoading}
+                                />
+                                <button
+                                    onClick={handleSendMessage}
+                                    disabled={isLoading || !userInput.trim()}
+                                    className="bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed transition-all duration-300 shadow-sm"
+                                >
+                                    {isLoading ? <i className="fas fa-spinner animate-spin"></i> : <i className="fas fa-paper-plane"></i>}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Use React 18's createRoot API
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
