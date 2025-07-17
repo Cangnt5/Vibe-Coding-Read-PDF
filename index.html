@@ -660,7 +660,7 @@
                                         }
                                     </div>
                                 ))}
-                                {isLoading && (
+                                {isLoading && !error && (
                                     <div className="flex items-end gap-3 justify-start">
                                         <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white flex-shrink-0">
                                             <i className="fas fa-robot"></i>
