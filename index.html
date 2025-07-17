@@ -227,6 +227,7 @@
             const extractTextFromFile = async (file) => {
                 setIsLoading(true);
                 setError(null);
+                let loadingHandled = false; // Biến cờ để tránh gọi setIsLoading(false) nhiều lần
                 try {
                     console.log(`Processing file: ${file.name} (${file.type})`);
                     
@@ -250,6 +251,8 @@
                         const apiKey = "YOUR_GEMINI_API_KEY"; // Replace with your actual Gemini API key
                         if (!apiKey || apiKey === "YOUR_GEMINI_API_KEY") {
                             // Hiển thị lỗi và dừng ngay, không xử lý thêm
+                            setIsLoading(false); // Tắt trạng thái loading ngay lập tức
+                            loadingHandled = true; // Đánh dấu đã xử lý loading
                             setError("Lỗi: API key của Google Gemini chưa được cấu hình. Vui lòng cập nhật API key trong code.");
                             return null; // Dừng ngay, không gọi API
                         }
@@ -265,9 +268,12 @@
                 } catch (err) {
                     console.error('File extraction error:', err);
                     handleApiError(`Lỗi xử lý file ${file.name}: ${err.message}`);
+                    loadingHandled = true; // handleApiError đã gọi setIsLoading(false)
                     return null;
                 } finally {
-                    setIsLoading(false);
+                    if (!loadingHandled) {
+                        setIsLoading(false);
+                    }
                 }
             };
 
