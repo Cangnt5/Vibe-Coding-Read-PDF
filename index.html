@@ -707,14 +707,14 @@
                                     onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                                     placeholder="Nhập câu hỏi của bạn ở đây..."
                                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                                    disabled={isLoading}
+                                    disabled={isLoading && !error}
                                 />
                                 <button
                                     onClick={handleSendMessage}
-                                    disabled={isLoading || !userInput.trim()}
+                                    disabled={(isLoading && !error) || !userInput.trim()}
                                     className="bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed transition-all duration-300 shadow-sm"
                                 >
-                                    {isLoading ? <i className="fas fa-spinner animate-spin"></i> : <i className="fas fa-paper-plane"></i>}
+                                    {(isLoading && !error) ? <i className="fas fa-spinner animate-spin"></i> : <i className="fas fa-paper-plane"></i>}
                                 </button>
                             </div>
                         </div>
