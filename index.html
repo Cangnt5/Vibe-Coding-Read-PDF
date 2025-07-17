@@ -497,6 +497,9 @@
                 if (!apiKey || apiKey === "YOUR_GEMINI_API_KEY") {
                     setMessages(prev => [...prev, { role: 'bot', content: "Lỗi: API key của Google Gemini chưa được cấu hình. Vui lòng cập nhật API key trong code." }]);
                     setError("API key của Google Gemini chưa được cấu hình. Vui lòng cập nhật API key trong code.");
+                    // Reset trạng thái loading và sending
+                    setIsLoading(false);
+                    setIsSending(false);
                     return;
                 }
                 
