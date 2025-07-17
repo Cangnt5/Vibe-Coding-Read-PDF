@@ -244,9 +244,17 @@
                         console.log(`File type was empty, detected as: ${fileType}`);
                     }
                     
-                    if (fileType.startsWith('image/') || getFileTypeFromName(file.name) === 'image') {
+                    // Kiểm tra API key trước khi xử lý file hình ảnh
+                    if ((fileType.startsWith('image/') || getFileTypeFromName(file.name) === 'image')) {
+                        // Kiểm tra API key trước khi chạy
+                        const apiKey = "YOUR_GEMINI_API_KEY"; // Replace with your actual Gemini API key
+                        if (!apiKey || apiKey === "YOUR_GEMINI_API_KEY") {
+                            // Hiển thị lỗi và dừng ngay, không xử lý thêm
+                            setError("Lỗi: API key của Google Gemini chưa được cấu hình. Vui lòng cập nhật API key trong code.");
+                            return null; // Dừng ngay, không gọi API
+                        }
                         const base64Data = await toBase64(file);
-                        return await callGeminiVisionAPI(base64Data);
+                        return await callGeminiVisionAPI(base64Data, apiKey);
                     } else if (fileType === 'application/pdf' || getFileTypeFromName(file.name) === 'pdf') {
                         return await extractTextFromPdf(file);
                     } else if (fileType === 'text/plain' || getFileTypeFromName(file.name) === 'text') {
@@ -264,15 +272,8 @@
             };
 
             // Function to call Gemini Vision API for image analysis
-            const callGeminiVisionAPI = async (base64ImageData) => {
-                const apiKey = "YOUR_GEMINI_API_KEY"; // Replace with your actual Gemini API key
-                
-                // Kiểm tra API key
-                if (!apiKey || apiKey === "YOUR_GEMINI_API_KEY") {
-                    setError("Lỗi: API key của Google Gemini chưa được cấu hình. Vui lòng cập nhật API key trong code.");
-                    // Không đặt setIsLoading(false) ở đây vì sẽ được xử lý trong khối finally của extractTextFromFile
-                    throw new Error("Lỗi: API key của Google Gemini chưa được cấu hình.");
-                }
+            const callGeminiVisionAPI = async (base64ImageData, apiKey) => {
+                // API key đã được kiểm tra trước đó trong hàm extractTextFromFile
                 
                 const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
                 
