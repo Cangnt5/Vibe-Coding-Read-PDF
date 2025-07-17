@@ -1,4 +1,4 @@
-# PDF Reader App
+# Vibe-Coding-Read-PDF
 
 Ứng dụng đọc và phân tích tài liệu PDF, hình ảnh và văn bản.
 
