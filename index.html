@@ -270,8 +270,8 @@
                 // Kiểm tra API key
                 if (!apiKey || apiKey === "YOUR_GEMINI_API_KEY") {
                     setError("Lỗi: API key của Google Gemini chưa được cấu hình. Vui lòng cập nhật API key trong code.");
-                    setIsLoading(false); // Đặt lại trạng thái loading khi có lỗi API key
-                    return null;
+                    // Không đặt setIsLoading(false) ở đây vì sẽ được xử lý trong khối finally của extractTextFromFile
+                    throw new Error("Lỗi: API key của Google Gemini chưa được cấu hình.");
                 }
                 
                 const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
